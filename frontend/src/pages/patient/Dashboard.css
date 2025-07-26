@@ -1,0 +1,36 @@
+.card:hover {
+    transform: translateY(-2px);
+    transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 35px rgba(102, 126, 234, 0.4) !important;
+}
+
+.nav-link:hover {
+    transform: translateY(-1px) !important;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    transition: all 0.3s ease;
+}
+
+.appointment-card:hover {
+    background: #f8f9fa !important;
+    border-color: #667eea !important;
+    transform: translateX(5px);
+}
+
+.message-item:hover {
+    background: rgba(102, 126, 234, 0.1) !important;
+    border-color: rgba(102, 126, 234, 0.2) !important;
+}
+
+@media (max-width: 768px) {
+    .nav-link {
+        font-size: 0.85rem;
+        padding: 8px 12px !important;
+    }
+}
