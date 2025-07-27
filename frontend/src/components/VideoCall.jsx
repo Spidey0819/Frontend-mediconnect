@@ -1,338 +1,511 @@
 import React, { useState, useEffect, useRef } from 'react';
-import io from 'socket.io-client';
+import Peer from 'peerjs';
+import apiConfig, { getPeerJSConfig } from '../config/api';
 
 const VideoCall = ({ appointmentId, onCallEnd }) => {
-    // State
+    const [peer, setPeer] = useState(null);
+    const [myPeerId, setMyPeerId] = useState('');
+    const [call, setCall] = useState(null);
     const [isCallActive, setIsCallActive] = useState(false);
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isConnecting, setIsConnecting] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState('disconnected');
-    const [error, setError] = useState('');
+    const [sessionId, setSessionId] = useState(null);
     const [roomId, setRoomId] = useState('');
+    const [error, setError] = useState('');
     const [connectedPeers, setConnectedPeers] = useState([]);
+    const [peerDiscoveryLog, setPeerDiscoveryLog] = useState([]);
+    const [connectionAttempts, setConnectionAttempts] = useState(0);
+    const [callInitiated, setCallInitiated] = useState(false);
 
-    // Refs
+    // Video refs
     const localVideoRef = useRef();
     const remoteVideoRef = useRef();
     const localStreamRef = useRef();
-    const peerConnectionRef = useRef();
-    const socketRef = useRef();
+    const connectionTimeoutRef = useRef();
+    const discoveryIntervalRef = useRef();
 
-    // User data
     const userRole = localStorage.getItem('role');
     const userName = localStorage.getItem('name');
 
-    // WebRTC Configuration
-    const rtcConfig = {
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            {
-                urls: 'turn:openrelay.metered.ca:80',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            },
-            {
-                urls: 'turn:openrelay.metered.ca:443',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            }
-        ],
-        iceCandidatePoolSize: 10
+    // Add log entry
+    const addLog = (message) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setPeerDiscoveryLog(prev => [...prev.slice(-8), `${timestamp}: ${message}`]);
+        console.log(`[VideoCall] ${message}`);
     };
 
-    // Initialize everything
+    // Enhanced PeerJS configuration with TURN servers
+    const getEnhancedPeerConfig = () => {
+        const baseConfig = getPeerJSConfig();
+        return {
+            ...baseConfig,
+            config: {
+                iceServers: [
+                    // Public STUN servers
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' },
+                    // Public TURN servers (these are free but limited)
+                    {
+                        urls: 'turn:openrelay.metered.ca:80',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    {
+                        urls: 'turn:openrelay.metered.ca:443',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    {
+                        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
+                ],
+                iceTransportPolicy: 'all',
+                iceCandidatePoolSize: 10
+            },
+            debug: 3 // Maximum debug level
+        };
+    };
+
+    // Initialize PeerJS and video session
     useEffect(() => {
-        initializeCall();
-        return cleanup;
+        const initializeVideoCall = async () => {
+            try {
+                setIsConnecting(true);
+                setError('');
+                addLog('Initializing enhanced video call...');
+
+                // Create or join video session
+                const token = localStorage.getItem('token');
+                const response = await fetch(`${apiConfig.apiUrl}/api/video/session/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ appointment_id: appointmentId })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create video session');
+                }
+
+                const sessionData = await response.json();
+                setSessionId(sessionData.session_id);
+                setRoomId(sessionData.room_id);
+                addLog(`Created session: ${sessionData.room_id}`);
+
+                // Initialize media first
+                await initializeMedia();
+
+                // Then initialize PeerJS
+                await initializePeerJS(sessionData);
+
+            } catch (error) {
+                console.error('Error initializing video call:', error);
+                addLog(`Initialization failed: ${error.message}`);
+                setError(`Failed to initialize video call: ${error.message}`);
+                setIsConnecting(false);
+            }
+        };
+
+        if (appointmentId) {
+            initializeVideoCall();
+        }
+
+        return () => {
+            cleanup();
+        };
     }, [appointmentId]);
 
-    const initializeCall = async () => {
+    const initializeMedia = async () => {
         try {
-            setIsConnecting(true);
-            setError('');
+            addLog('Requesting camera and microphone access...');
 
-            // Get media first
-            await getUserMedia();
-
-            // Initialize socket connection
-            initializeSocket();
-
-            // Create room ID from appointment
-            const room = `appointment_${appointmentId}`;
-            setRoomId(room);
-
-            // Join the room
-            setTimeout(() => {
-                if (socketRef.current) {
-                    socketRef.current.emit('join-room', {
-                        roomId: room,
-                        userRole,
-                        userName
-                    });
-                }
-            }, 1000);
-
-        } catch (error) {
-            setError(`Failed to initialize: ${error.message}`);
-            setIsConnecting(false);
-        }
-    };
-
-    // Get user media
-    const getUserMedia = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    frameRate: { ideal: 30 }
-                },
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
-            });
+            // Request media with fallback options
+            let stream;
+            try {
+                // Try with ideal constraints first
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30, max: 30 }
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+            } catch (error) {
+                addLog('High quality media failed, trying basic constraints...');
+                // Fallback to basic constraints
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+            }
 
             localStreamRef.current = stream;
             if (localVideoRef.current) {
                 localVideoRef.current.srcObject = stream;
             }
 
-            console.log('✅ Media acquired');
+            addLog(`Media initialized: ${stream.getVideoTracks().length} video, ${stream.getAudioTracks().length} audio tracks`);
+
         } catch (error) {
-            console.error('❌ Media error:', error);
-            throw new Error('Camera/microphone access denied');
+            console.error('Error accessing media devices:', error);
+            addLog(`Media access failed: ${error.message}`);
+            setError('Failed to access camera/microphone. Please check permissions.');
+            throw error;
         }
     };
 
-    // Initialize Socket.IO
-    const initializeSocket = () => {
-        // Connect to your Flask-SocketIO server
-        socketRef.current = io('https://backend-mediconnect.onrender.com', {
-            transports: ['websocket', 'polling']
-        });
+    const initializePeerJS = async (sessionData) => {
+        try {
+            const peerConfig = getEnhancedPeerConfig();
+            const peerId = `${sessionData.room_id}_${userRole}_${Date.now()}`;
 
-        socketRef.current.on('connect', () => {
-            console.log('✅ Socket connected');
-            setConnectionStatus('connected');
-            setIsConnecting(false);
-        });
+            addLog(`Connecting to PeerJS: ${peerConfig.secure ? 'wss' : 'ws'}://${peerConfig.host}:${peerConfig.port}`);
 
-        socketRef.current.on('disconnect', () => {
-            console.log('❌ Socket disconnected');
-            setConnectionStatus('disconnected');
-        });
+            const newPeer = new Peer(peerId, peerConfig);
 
-        // Room events
-        socketRef.current.on('user-joined', (data) => {
-            console.log('👤 User joined:', data);
-            setConnectedPeers(data.users);
+            // Set connection timeout
+            connectionTimeoutRef.current = setTimeout(() => {
+                if (!myPeerId) {
+                    addLog('❌ PeerJS connection timeout');
+                    setError('Connection timeout. Please check your internet connection.');
+                    setConnectionStatus('error');
+                }
+            }, 15000); // 15 second timeout
 
-            // If we're the patient and doctor joined, start the call
-            if (userRole === 'patient' && data.user.role === 'doctor') {
-                setTimeout(() => createOffer(), 1000);
-            }
-        });
+            newPeer.on('open', (id) => {
+                clearTimeout(connectionTimeoutRef.current);
+                console.log('My peer ID is: ' + id);
+                setMyPeerId(id);
+                setConnectionStatus('connected');
+                setIsConnecting(false);
+                addLog(`✅ PeerJS connected: ${id.substring(0, 20)}...`);
 
-        socketRef.current.on('user-left', (data) => {
-            console.log('👋 User left:', data);
-            setConnectedPeers(data.users);
-            handlePeerDisconnected();
-        });
+                // Store peer ID and start discovery
+                storePeerIdInBackend(sessionData.session_id, id);
+                joinSession(sessionData.session_id);
+            });
 
-        // WebRTC signaling events
-        socketRef.current.on('offer', handleOffer);
-        socketRef.current.on('answer', handleAnswer);
-        socketRef.current.on('ice-candidate', handleIceCandidate);
+            newPeer.on('call', (incomingCall) => {
+                addLog('📞 Incoming call received!');
+                handleIncomingCall(incomingCall);
+            });
 
-        socketRef.current.on('error', (error) => {
-            console.error('Socket error:', error);
-            setError(error.message || 'Connection error');
-        });
+            newPeer.on('disconnected', () => {
+                addLog('⚠️ Peer disconnected, attempting reconnection...');
+                setConnectionStatus('reconnecting');
+
+                // Attempt to reconnect
+                setTimeout(() => {
+                    if (newPeer && !newPeer.destroyed) {
+                        newPeer.reconnect();
+                    }
+                }, 2000);
+            });
+
+            newPeer.on('error', (err) => {
+                clearTimeout(connectionTimeoutRef.current);
+                console.error('PeerJS error:', err);
+                addLog(`❌ PeerJS error: ${err.type} - ${err.message}`);
+
+                if (err.type === 'peer-unavailable') {
+                    addLog('Target peer unavailable, retrying discovery...');
+                    setConnectionAttempts(prev => prev + 1);
+                } else {
+                    setError(`Connection error: ${err.message}`);
+                    setConnectionStatus('error');
+                }
+            });
+
+            setPeer(newPeer);
+
+        } catch (error) {
+            addLog(`❌ PeerJS initialization failed: ${error.message}`);
+            throw error;
+        }
     };
 
-    // Create WebRTC peer connection
-    const createPeerConnection = () => {
-        if (peerConnectionRef.current) {
-            peerConnectionRef.current.close();
-        }
-
-        const pc = new RTCPeerConnection(rtcConfig);
-        peerConnectionRef.current = pc;
-
-        // Add local stream
+    const handleIncomingCall = (incomingCall) => {
         if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => {
-                pc.addTrack(track, localStreamRef.current);
-            });
-        }
+            addLog('Answering incoming call...');
+            incomingCall.answer(localStreamRef.current);
+            setCall(incomingCall);
+            setCallInitiated(true);
 
-        // Handle remote stream
-        pc.ontrack = (event) => {
-            console.log('🎥 Remote stream received');
-            if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = event.streams[0];
+            incomingCall.on('stream', (remoteStream) => {
+                addLog('✅ Remote video stream connected!');
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                }
                 setIsCallActive(true);
-            }
-        };
-
-        // Handle ICE candidates
-        pc.onicecandidate = (event) => {
-            if (event.candidate && socketRef.current) {
-                socketRef.current.emit('ice-candidate', {
-                    roomId,
-                    candidate: event.candidate
-                });
-            }
-        };
-
-        // Connection state changes
-        pc.onconnectionstatechange = () => {
-            console.log('🔗 Connection state:', pc.connectionState);
-            if (pc.connectionState === 'connected') {
                 setConnectionStatus('call-active');
-            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                setConnectionStatus('disconnected');
-                setIsCallActive(false);
-            }
-        };
+            });
 
-        return pc;
+            incomingCall.on('close', () => {
+                addLog('Call ended by remote participant');
+                handleCallEnd();
+            });
+
+            incomingCall.on('error', (error) => {
+                addLog(`Call error: ${error.message}`);
+                handleCallEnd();
+            });
+        }
     };
 
-    // Create offer (caller - usually patient)
-    const createOffer = async () => {
+    const storePeerIdInBackend = async (sessionId, peerId) => {
         try {
-            console.log('📞 Creating offer...');
-            const pc = createPeerConnection();
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peer`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    peer_id: peerId,
+                    user_role: userRole,
+                    user_name: userName
+                })
+            });
 
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
+            if (response.ok) {
+                addLog('✅ Registered with backend');
+            } else {
+                addLog('❌ Backend registration failed');
+            }
+        } catch (error) {
+            addLog(`Backend registration error: ${error.message}`);
+        }
+    };
 
-            socketRef.current.emit('offer', {
-                roomId,
-                offer: offer
+    const joinSession = async (sessionId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/join`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                addLog('✅ Joined video session');
+                startPeerDiscovery(sessionId);
+            }
+        } catch (error) {
+            addLog(`Session join error: ${error.message}`);
+        }
+    };
+
+    const startPeerDiscovery = (sessionId) => {
+        // Start immediate discovery
+        discoverPeers(sessionId);
+
+        // Set up periodic discovery
+        discoveryIntervalRef.current = setInterval(() => {
+            if (!isCallActive) {
+                discoverPeers(sessionId);
+            }
+        }, 3000);
+    };
+
+    const discoverPeers = async (sessionId) => {
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peers`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const otherPeers = data.peers.filter(p =>
+                    p.peer_id !== myPeerId && p.user_role !== userRole
+                );
+
+                setConnectedPeers(data.peers);
+
+                if (otherPeers.length > 0 && !callInitiated && !isCallActive) {
+                    const targetPeer = otherPeers[0];
+                    addLog(`🎯 Found ${targetPeer.user_name} (${targetPeer.user_role})`);
+
+                    // Add delay for mobile networks
+                    setTimeout(() => {
+                        if (userRole === 'patient' && !callInitiated) {
+                            initiateCall(targetPeer.peer_id, targetPeer.user_name);
+                        }
+                    }, 2000);
+                } else if (otherPeers.length === 0) {
+                    addLog(`Waiting for other participant... (${data.peers.length} total)`);
+                }
+            }
+        } catch (error) {
+            addLog(`Peer discovery error: ${error.message}`);
+        }
+    };
+
+    const initiateCall = async (targetPeerId, targetName) => {
+        if (!peer || !localStreamRef.current || callInitiated) {
+            return;
+        }
+
+        try {
+            setCallInitiated(true);
+            addLog(`📞 Calling ${targetName}...`);
+
+            const outgoingCall = peer.call(targetPeerId, localStreamRef.current);
+
+            if (!outgoingCall) {
+                throw new Error('Failed to initiate call');
+            }
+
+            setCall(outgoingCall);
+
+            // Set call timeout
+            const callTimeout = setTimeout(() => {
+                if (!isCallActive) {
+                    addLog('❌ Call timeout, retrying...');
+                    setCallInitiated(false);
+                    setConnectionAttempts(prev => prev + 1);
+                }
+            }, 10000);
+
+            outgoingCall.on('stream', (remoteStream) => {
+                clearTimeout(callTimeout);
+                addLog('✅ Call connected successfully!');
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                }
+                setIsCallActive(true);
+                setConnectionStatus('call-active');
+
+                // Stop peer discovery
+                if (discoveryIntervalRef.current) {
+                    clearInterval(discoveryIntervalRef.current);
+                }
+            });
+
+            outgoingCall.on('close', () => {
+                clearTimeout(callTimeout);
+                addLog('Call closed by remote participant');
+                handleCallEnd();
+            });
+
+            outgoingCall.on('error', (error) => {
+                clearTimeout(callTimeout);
+                addLog(`❌ Call error: ${error.message}`);
+                setCallInitiated(false);
+                setConnectionAttempts(prev => prev + 1);
+
+                // Retry if not too many attempts
+                if (connectionAttempts < 3) {
+                    setTimeout(() => {
+                        addLog('Retrying call...');
+                        initiateCall(targetPeerId, targetName);
+                    }, 3000);
+                }
             });
 
         } catch (error) {
-            console.error('❌ Offer creation failed:', error);
-            setError('Failed to create offer');
+            addLog(`❌ Call initiation failed: ${error.message}`);
+            setCallInitiated(false);
         }
     };
 
-    // Handle incoming offer
-    const handleOffer = async (data) => {
-        try {
-            console.log('📧 Received offer');
-            const pc = createPeerConnection();
-
-            await pc.setRemoteDescription(data.offer);
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-
-            socketRef.current.emit('answer', {
-                roomId,
-                answer: answer
-            });
-
-        } catch (error) {
-            console.error('❌ Offer handling failed:', error);
-            setError('Failed to handle offer');
-        }
-    };
-
-    // Handle answer
-    const handleAnswer = async (data) => {
-        try {
-            console.log('✅ Received answer');
-            if (peerConnectionRef.current) {
-                await peerConnectionRef.current.setRemoteDescription(data.answer);
-            }
-        } catch (error) {
-            console.error('❌ Answer handling failed:', error);
-        }
-    };
-
-    // Handle ICE candidate
-    const handleIceCandidate = async (data) => {
-        try {
-            if (peerConnectionRef.current) {
-                await peerConnectionRef.current.addIceCandidate(data.candidate);
-            }
-        } catch (error) {
-            console.error('❌ ICE candidate error:', error);
-        }
-    };
-
-    // Handle peer disconnected
-    const handlePeerDisconnected = () => {
+    const handleCallEnd = () => {
         setIsCallActive(false);
+        setCallInitiated(false);
+        setCall(null);
+        setConnectionStatus('connected');
+
         if (remoteVideoRef.current) {
             remoteVideoRef.current.srcObject = null;
         }
-        if (peerConnectionRef.current) {
-            peerConnectionRef.current.close();
-            peerConnectionRef.current = null;
+    };
+
+    const cleanup = () => {
+        if (discoveryIntervalRef.current) {
+            clearInterval(discoveryIntervalRef.current);
+        }
+        if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+        }
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(track => track.stop());
+        }
+        if (peer && !peer.destroyed) {
+            peer.destroy();
         }
     };
 
-    // Toggle video
+    const endCall = async () => {
+        try {
+            cleanup();
+
+            if (sessionId) {
+                const token = localStorage.getItem('token');
+                await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/end`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+            }
+
+            if (onCallEnd) {
+                onCallEnd();
+            }
+        } catch (error) {
+            console.error('Error ending call:', error);
+        }
+    };
+
     const toggleVideo = () => {
         if (localStreamRef.current) {
             const videoTrack = localStreamRef.current.getVideoTracks()[0];
             if (videoTrack) {
                 videoTrack.enabled = !videoTrack.enabled;
                 setIsVideoEnabled(videoTrack.enabled);
+                addLog(videoTrack.enabled ? 'Camera on' : 'Camera off');
             }
         }
     };
 
-    // Toggle audio
     const toggleAudio = () => {
         if (localStreamRef.current) {
             const audioTrack = localStreamRef.current.getAudioTracks()[0];
             if (audioTrack) {
                 audioTrack.enabled = !audioTrack.enabled;
                 setIsAudioEnabled(audioTrack.enabled);
+                addLog(audioTrack.enabled ? 'Microphone on' : 'Microphone off');
             }
         }
     };
 
-    // Retry connection
     const retryConnection = () => {
-        setError('');
-        setIsCallActive(false);
-        if (userRole === 'patient') {
-            setTimeout(() => createOffer(), 1000);
+        addLog('🔄 Manual retry initiated...');
+        setConnectionAttempts(0);
+        setCallInitiated(false);
+        if (sessionId) {
+            startPeerDiscovery(sessionId);
         }
     };
 
-    // End call
-    const endCall = () => {
-        cleanup();
-        if (onCallEnd) {
-            onCallEnd();
-        }
-    };
-
-    // Cleanup
-    const cleanup = () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => track.stop());
-        }
-        if (peerConnectionRef.current) {
-            peerConnectionRef.current.close();
-        }
-        if (socketRef.current) {
-            socketRef.current.disconnect();
-        }
-    };
-
-    // Status message
     const getStatusMessage = () => {
         if (isCallActive) return 'Video call active';
         if (isConnecting) return 'Connecting to video service...';
@@ -340,7 +513,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
             return `Waiting for ${userRole === 'doctor' ? 'patient' : 'doctor'} to join...`;
         }
         if (connectionStatus === 'connected' && connectedPeers.length === 2) {
-            return 'Both participants online, connecting...';
+            return callInitiated ? 'Establishing connection...' : 'Both participants online, connecting...';
         }
         if (connectionStatus === 'error') return 'Connection error';
         return 'Initializing...';
@@ -349,20 +522,14 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     return (
         <div className="video-call-container" style={{
             position: 'fixed',
-            top: '50%',
-            left: '50%',
-            width: '90vw',
-            height: '90vh',
-            maxWidth: '1400px',
-            maxHeight: '900px',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
             backgroundColor: '#1a1a1a',
             zIndex: 9999,
             display: 'flex',
-            flexDirection: 'column',
-            borderRadius: '12px',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-            border: '2px solid #333',
-            transform: 'translateX(-50%) translateY(-50%)'
+            flexDirection: 'column'
         }}>
             {/* Header */}
             <div className="video-call-header" style={{
@@ -371,9 +538,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
                 padding: '1rem 2rem',
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center',
-                borderRadius: '12px 12px 0 0',
-                minHeight: '70px'
+                alignItems: 'center'
             }}>
                 <div>
                     <h5 className="mb-0">Medical Consultation</h5>
@@ -417,28 +582,18 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
                 </div>
             )}
 
-            {/* Main Video Area */}
-            <div className="video-area flex-grow-1 position-relative" style={{
-                padding: '20px',
-                display: 'grid',
-                gridTemplateColumns: '1fr auto',
-                gridTemplateRows: '1fr auto',
-                gap: '15px',
-                minHeight: '0'
-            }}>
-                {/* Remote Video (Main) */}
+            {/* Video Area */}
+            <div className="video-area flex-grow-1 position-relative p-3">
                 <div className="remote-video-container" style={{
-                    gridColumn: '1',
-                    gridRow: '1',
+                    width: '100%',
+                    height: '100%',
                     backgroundColor: '#2a2a2a',
-                    borderRadius: '12px',
+                    borderRadius: '15px',
                     overflow: 'hidden',
                     position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    minHeight: '400px',
-                    aspectRatio: '16/9'
+                    justifyContent: 'center'
                 }}>
                     {isCallActive ? (
                         <video
@@ -454,119 +609,171 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
                     ) : (
                         <div className="text-center text-white">
                             {isConnecting ? (
-                                <div>
-                                    <div className="spinner-border text-light mb-3" role="status">
-                                        <span className="visually-hidden">Connecting...</span>
-                                    </div>
-                                    <h5>Connecting to video service...</h5>
-                                    <p>Please wait while we establish the connection.</p>
-                                </div>
-                            ) : connectionStatus === 'connected' && connectedPeers.length < 2 ? (
-                                <div>
-                                    <i className="fas fa-user-clock fa-3x mb-3"></i>
-                                    <h5>Waiting for other participant...</h5>
-                                    <p>The {userRole === 'doctor' ? 'patient' : 'doctor'} will join shortly.</p>
-                                </div>
-                            ) : connectionStatus === 'connected' && connectedPeers.length === 2 ? (
-                                <div>
-                                    <i className="fas fa-video fa-3x mb-3"></i>
-                                    <h5>Both participants online, connecting...</h5>
-                                    <button
-                                        className="btn btn-primary mt-2"
-                                        onClick={retryConnection}
-                                    >
-                                        <i className="fas fa-sync me-2"></i>
-                                        Start Video Call
-                                    </button>
-                                </div>
+                                <>
+                                    <div className="spinner-border mb-3" role="status"></div>
+                                    <p>Connecting to video call...</p>
+                                </>
                             ) : (
-                                <div>
-                                    <i className="fas fa-exclamation-triangle fa-3x mb-3 text-warning"></i>
-                                    <h5>Connection Issue</h5>
-                                    <p>Please check your internet connection and try again.</p>
-                                    <button
-                                        className="btn btn-warning"
-                                        onClick={retryConnection}
-                                    >
-                                        <i className="fas fa-redo me-2"></i>
-                                        Retry
-                                    </button>
-                                </div>
+                                <>
+                                    <i className="fas fa-user-circle fa-5x mb-3 opacity-50"></i>
+                                    <p>{getStatusMessage()}</p>
+                                    {connectedPeers.length === 2 && !isCallActive && (
+                                        <div className="mt-3">
+                                            <button
+                                                className="btn btn-primary"
+                                                onClick={retryConnection}
+                                            >
+                                                <i className="fas fa-sync me-2"></i>
+                                                Retry Connection
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
                     )}
-                </div>
 
-                {/* Local Video (Picture-in-Picture) */}
-                <div className="local-video-container" style={{
-                    gridColumn: '2',
-                    gridRow: '1',
-                    width: '250px',
-                    height: '188px',
-                    backgroundColor: '#3a3a3a',
-                    borderRadius: '8px',
-                    overflow: 'hidden',
-                    position: 'relative',
-                    alignSelf: 'start',
-                    border: '2px solid #667eea'
-                }}>
-                    <video
-                        ref={localVideoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'cover',
-                            transform: 'scaleX(-1)'
-                        }}
-                    />
+                    {/* Local Video */}
                     <div style={{
                         position: 'absolute',
-                        bottom: '8px',
-                        left: '8px',
-                        background: 'rgba(0,0,0,0.7)',
-                        color: 'white',
-                        padding: '4px 8px',
-                        borderRadius: '12px',
-                        fontSize: '0.75rem'
+                        bottom: '20px',
+                        right: '20px',
+                        width: '200px',
+                        height: '150px',
+                        backgroundColor: '#3a3a3a',
+                        borderRadius: '10px',
+                        overflow: 'hidden',
+                        border: '2px solid #fff'
                     }}>
-                        You ({userRole})
+                        <video
+                            ref={localVideoRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                transform: 'scaleX(-1)'
+                            }}
+                        />
+                        {!isVideoEnabled && (
+                            <div style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height: '100%',
+                                backgroundColor: '#1a1a1a',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: 'white'
+                            }}>
+                                <i className="fas fa-video-slash fa-2x"></i>
+                            </div>
+                        )}
+                        <div style={{
+                            position: 'absolute',
+                            bottom: '5px',
+                            left: '5px',
+                            color: 'white',
+                            fontSize: '0.8rem',
+                            background: 'rgba(0,0,0,0.5)',
+                            padding: '2px 6px',
+                            borderRadius: '4px'
+                        }}>
+                            You ({userRole})
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                {/* Control Bar */}
-                <div className="control-bar" style={{
-                    gridColumn: '1 / -1',
-                    gridRow: '2',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    gap: '30px',
-                    padding: '15px',
-                    backgroundColor: 'rgba(42, 42, 42, 0.8)',
-                    borderRadius: '25px',
-                    backdropFilter: 'blur(10px)'
-                }}>
-                    <button
-                        className={`btn ${isVideoEnabled ? 'btn-secondary' : 'btn-danger'} rounded-circle`}
-                        onClick={toggleVideo}
-                        style={{ width: '60px', height: '60px' }}
-                        title={isVideoEnabled ? 'Turn off camera' : 'Turn on camera'}
-                    >
-                        <i className={`fas ${isVideoEnabled ? 'fa-video' : 'fa-video-slash'} fa-lg`}></i>
-                    </button>
+            {/* Controls */}
+            <div className="video-controls" style={{
+                padding: '2rem',
+                background: 'rgba(0,0,0,0.8)',
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '1rem'
+            }}>
+                <button
+                    className={`btn ${isVideoEnabled ? 'btn-secondary' : 'btn-danger'} rounded-circle`}
+                    onClick={toggleVideo}
+                    style={{ width: '60px', height: '60px' }}
+                >
+                    <i className={`fas ${isVideoEnabled ? 'fa-video' : 'fa-video-slash'} fa-lg`}></i>
+                </button>
 
-                    <button
-                        className={`btn ${isAudioEnabled ? 'btn-secondary' : 'btn-danger'} rounded-circle`}
-                        onClick={toggleAudio}
-                        style={{ width: '60px', height: '60px' }}
-                        title={isAudioEnabled ? 'Mute microphone' : 'Unmute microphone'}
-                    >
-                        <i className={`fas ${isAudioEnabled ? 'fa-microphone' : 'fa-microphone-slash'} fa-lg`}></i>
-                    </button>
-                </div>
+                <button
+                    className={`btn ${isAudioEnabled ? 'btn-secondary' : 'btn-danger'} rounded-circle`}
+                    onClick={toggleAudio}
+                    style={{ width: '60px', height: '60px' }}
+                >
+                    <i className={`fas ${isAudioEnabled ? 'fa-microphone' : 'fa-microphone-slash'} fa-lg`}></i>
+                </button>
+
+                <button
+                    className="btn btn-info rounded-circle"
+                    style={{ width: '60px', height: '60px' }}
+                >
+                    <i className="fas fa-comment fa-lg"></i>
+                </button>
+
+                <button
+                    className="btn btn-warning rounded-circle"
+                    style={{ width: '60px', height: '60px' }}
+                >
+                    <i className="fas fa-desktop fa-lg"></i>
+                </button>
+
+                <button
+                    className="btn btn-success rounded-circle"
+                    style={{ width: '60px', height: '60px' }}
+                >
+                    <i className="fas fa-cog fa-lg"></i>
+                </button>
+            </div>
+
+            {/* Enhanced Debug Info */}
+            <div style={{
+                position: 'absolute',
+                top: '100px',
+                left: '20px',
+                background: 'rgba(0,0,0,0.95)',
+                color: 'white',
+                padding: '15px',
+                borderRadius: '8px',
+                fontSize: '0.8rem',
+                maxWidth: '400px',
+                maxHeight: '350px',
+                overflow: 'auto'
+            }}>
+                <div><strong>Status:</strong> {connectionStatus}</div>
+                <div><strong>Participants:</strong> {connectedPeers.length}/2</div>
+                <div><strong>Call Active:</strong> {isCallActive ? '✅ Yes' : '❌ No'}</div>
+                <div><strong>Call Initiated:</strong> {callInitiated ? 'Yes' : 'No'}</div>
+                <div><strong>Attempts:</strong> {connectionAttempts}</div>
+
+                <hr style={{ margin: '10px 0', borderColor: '#444' }} />
+                <div><strong>Discovery Log:</strong></div>
+                {peerDiscoveryLog.map((log, index) => (
+                    <div key={index} style={{ fontSize: '0.7rem', marginBottom: '2px' }}>
+                        {log}
+                    </div>
+                ))}
+
+                {connectedPeers.length > 0 && (
+                    <>
+                        <hr style={{ margin: '10px 0', borderColor: '#444' }} />
+                        <div><strong>Peers:</strong></div>
+                        {connectedPeers.map((peer, index) => (
+                            <div key={index} style={{ fontSize: '0.7rem' }}>
+                                • {peer.user_name} ({peer.user_role})
+                            </div>
+                        ))}
+                    </>
+                )}
             </div>
         </div>
     );
