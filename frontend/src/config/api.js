@@ -16,22 +16,21 @@ const config = {
     }
 };
 
-// Determine environment based on current URL or environment variable
+// Enhanced environment detection
 const getEnvironment = () => {
-    // Check if we're in a production environment
+    // Check environment variable first
     if (process.env.NODE_ENV === 'production') {
         return 'production';
     }
 
-    // Check if the current page is served over HTTPS
-    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-        return 'production';
-    }
-
-    // Check for common production hostnames
+    // Check if we're on a production domain
     if (typeof window !== 'undefined') {
         const hostname = window.location.hostname;
-        if (hostname.includes('onrender.com') ||
+        const protocol = window.location.protocol;
+
+        // Force production for HTTPS or known deployment platforms
+        if (protocol === 'https:' ||
+            hostname.includes('onrender.com') ||
             hostname.includes('vercel.app') ||
             hostname.includes('netlify.app') ||
             hostname.includes('herokuapp.com')) {
@@ -45,50 +44,112 @@ const getEnvironment = () => {
 const environment = process.env.REACT_APP_ENVIRONMENT || getEnvironment();
 const currentConfig = config[environment];
 
-console.log(`[API Config] Using ${environment} configuration:`, {
+console.log(`[API Config] Environment: ${environment}`, {
     apiUrl: currentConfig.apiUrl,
     peerjsHost: currentConfig.peerjsHost,
     peerjsPort: currentConfig.peerjsPort,
     peerjsSecure: currentConfig.peerjsSecure
 });
 
-// Helper function to get the correct PeerJS configuration
+// Enhanced PeerJS configuration with multiple fallback options
 export const getPeerJSConfig = () => {
-    // Force secure connection if the page is served over HTTPS
-    const forceSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
-    const shouldUseSecure = forceSecure || currentConfig.peerjsSecure;
+    const isSecure = currentConfig.peerjsSecure || (typeof window !== 'undefined' && window.location.protocol === 'https:');
 
-    // Adjust port for secure connections
-    const port = shouldUseSecure ?
-        (currentConfig.peerjsPort === 9000 ? 443 : currentConfig.peerjsPort) :
-        currentConfig.peerjsPort;
+    // Use port 443 for secure connections, original port for insecure
+    const port = isSecure ? 443 : currentConfig.peerjsPort;
 
-    const peerConfig = {
+    const baseConfig = {
         host: currentConfig.peerjsHost,
         port: parseInt(port),
         path: currentConfig.peerjsPath,
-        secure: shouldUseSecure,
+        secure: isSecure,
+        debug: environment === 'development' ? 3 : 1,
         config: {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' }
-            ]
-        },
-        debug: process.env.NODE_ENV === 'development' ? 2 : 0
+            iceServers: getICEServers(),
+            iceTransportPolicy: 'all', // Use both STUN and TURN
+            iceCandidatePoolSize: 10,
+            rtcpMuxPolicy: 'require',
+            bundlePolicy: 'max-bundle'
+        }
     };
 
-    console.log(`[PeerJS Config] Generated configuration:`, {
-        ...peerConfig,
-        config: { iceServers: peerConfig.config.iceServers.length + ' STUN servers' }
+    console.log(`[PeerJS Config] Generated:`, {
+        host: baseConfig.host,
+        port: baseConfig.port,
+        secure: baseConfig.secure,
+        iceServers: baseConfig.config.iceServers.length + ' servers'
     });
 
-    return peerConfig;
+    return baseConfig;
 };
 
-// Helper function to check if we should use secure protocols
+// Comprehensive ICE servers configuration
+export const getICEServers = () => {
+    const iceServers = [
+        // Google STUN servers (free and reliable)
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+
+        // Additional public STUN servers
+        { urls: 'stun:stun.services.mozilla.com' },
+        { urls: 'stun:stun.stunprotocol.org:3478' },
+
+        // Free TURN servers (limited but helpful for testing)
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+
+        // Backup TURN servers
+        {
+            urls: 'turn:relay1.expressturn.com:3478',
+            username: 'ef3K7WY6YSZP9UTQFA',
+            credential: 'lYQQMnZnmtIhURGD'
+        }
+    ];
+
+    return iceServers;
+};
+
+// Test PeerJS connectivity
+export const testPeerJSConnection = async () => {
+    return new Promise((resolve, reject) => {
+        const testPeer = new (window.Peer || require('peerjs'))('test-' + Date.now(), getPeerJSConfig());
+
+        const timeout = setTimeout(() => {
+            testPeer.destroy();
+            reject(new Error('Connection timeout'));
+        }, 10000);
+
+        testPeer.on('open', (id) => {
+            clearTimeout(timeout);
+            testPeer.destroy();
+            resolve({ success: true, peerId: id });
+        });
+
+        testPeer.on('error', (error) => {
+            clearTimeout(timeout);
+            testPeer.destroy();
+            reject(error);
+        });
+    });
+};
+
+// Check if we should use secure protocols
 export const isSecureEnvironment = () => {
     if (typeof window !== 'undefined') {
         return window.location.protocol === 'https:';
@@ -96,11 +157,63 @@ export const isSecureEnvironment = () => {
     return currentConfig.peerjsSecure;
 };
 
-// Helper function to get WebSocket URL for debugging
+// Get WebSocket URL for debugging
 export const getWebSocketUrl = () => {
     const config = getPeerJSConfig();
     const protocol = config.secure ? 'wss' : 'ws';
     return `${protocol}://${config.host}:${config.port}${config.path}`;
+};
+
+// Network quality detection
+export const detectNetworkQuality = async () => {
+    try {
+        const startTime = Date.now();
+        const response = await fetch(currentConfig.apiUrl + '/health', {
+            method: 'GET',
+            cache: 'no-cache'
+        });
+        const endTime = Date.now();
+        const latency = endTime - startTime;
+
+        if (response.ok) {
+            return {
+                latency,
+                quality: latency < 100 ? 'excellent' :
+                    latency < 300 ? 'good' :
+                        latency < 500 ? 'fair' : 'poor'
+            };
+        }
+        throw new Error('Health check failed');
+    } catch (error) {
+        return { error: error.message, quality: 'unknown' };
+    }
+};
+
+// Enhanced error handling for API calls
+export const apiCall = async (url, options = {}) => {
+    const fullUrl = url.startsWith('http') ? url : `${currentConfig.apiUrl}${url}`;
+
+    const defaultOptions = {
+        method: 'GET',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        },
+        ...options
+    };
+
+    try {
+        const response = await fetch(fullUrl, defaultOptions);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error(`API call failed for ${fullUrl}:`, error);
+        throw error;
+    }
 };
 
 export default currentConfig;
