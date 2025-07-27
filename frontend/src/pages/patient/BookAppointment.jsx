@@ -41,7 +41,7 @@ export default function BookAppointment() {
         const token = localStorage.getItem('token');
 
         // Fetch doctor info
-        const doctorsResponse = await axios.get('http://localhost:5000/api/doctors', {
+        const doctorsResponse = await axios.get('https://backend-mediconnect.onrender.com/api/doctors', {
           headers: { Authorization: `Bearer ${token}` }
         });
 
@@ -52,7 +52,7 @@ export default function BookAppointment() {
 
         // Fetch availability
         const availabilityResponse = await axios.get(
-            `http://localhost:5000/api/doctors/${doctorId}/availability`,
+            `https://backend-mediconnect.onrender.com/api/doctors/${doctorId}/availability`,
             {
               headers: { Authorization: `Bearer ${token}` }
             }
@@ -127,7 +127,7 @@ export default function BookAppointment() {
       if (!selectedDate) return;
 
       try {
-        const res = await axios.get(`http://localhost:5000/api/appointments/${doctorId}/${selectedDate}`);
+        const res = await axios.get(`https://backend-mediconnect.onrender.com/api/appointments/${doctorId}/${selectedDate}`);
         setBookedSlots(res.data.bookedSlots || []);
       } catch (err) {
         console.error("Failed to fetch booked slots", err);
@@ -154,7 +154,7 @@ export default function BookAppointment() {
 
     try {
       const response = await axios.post(
-          'http://localhost:5000/api/book',
+          'https://backend-mediconnect.onrender.com/api/book',
           {
             date: selectedDate,
             time: selectedSlot,

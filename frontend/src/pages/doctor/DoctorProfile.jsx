@@ -52,7 +52,7 @@ const DoctorProfile = () => {
   const fetchProfile = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/doctor/profile', {
+      const response = await axios.get('https://backend-mediconnect.onrender.com/api/doctor/profile', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setProfile(response.data);
@@ -67,7 +67,7 @@ const DoctorProfile = () => {
         medicalLicense: response.data.medicalLicense || ''
       });
       if (response.data.profilePhoto) {
-        setPhotoPreview(`http://localhost:5000/api/files/${response.data.profilePhoto}`);
+        setPhotoPreview(`https://backend-mediconnect.onrender.com/api/files/${response.data.profilePhoto}`);
       }
     } catch (error) {
       if (error.response?.status === 404) {
@@ -133,7 +133,7 @@ const DoctorProfile = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.post('http://localhost:5000/api/upload', formData, {
+      const response = await axios.post('https://backend-mediconnect.onrender.com/api/upload', formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -179,7 +179,7 @@ const DoctorProfile = () => {
         submitData.profilePhoto = photoId;
       }
       
-      await axios[method]('http://localhost:5000/api/doctor/profile', submitData, {
+      await axios[method]('https://backend-mediconnect.onrender.com/api/doctor/profile', submitData, {
         headers: { Authorization: `Bearer ${token}` }
       });
       

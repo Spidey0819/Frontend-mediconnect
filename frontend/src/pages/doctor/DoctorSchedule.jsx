@@ -29,7 +29,7 @@ const DoctorSchedule = (props) => {
   const fetchSchedule = async () => {
     try {
       const res = await axios.get(
-        `http://localhost:5000/doctor/schedule?doctorId=${doctorId}`
+        `https://backend-mediconnect.onrender.com/doctor/schedule?doctorId=${doctorId}`
       );
       const mappedEvents = res.data.map((slot) => ({
         id: slot._id,
@@ -106,8 +106,8 @@ const DoctorSchedule = (props) => {
 
       const endpoint =
           slotData.type === "available"
-              ? "http://localhost:5000/doctor/availability"
-              : "http://localhost:5000/doctor/busy";
+              ? "https://backend-mediconnect.onrender.com/doctor/availability"
+              : "https://backend-mediconnect.onrender.com/doctor/busy";
 
       const payload = {
         doctorId: currentDoctorId, // Use the stored doctor ID
@@ -143,8 +143,8 @@ const DoctorSchedule = (props) => {
     ) {
       try {
         const endpoint = isBusy
-          ? `http://localhost:5000/doctor/busy/${id}`
-          : `http://localhost:5000/doctor/availability/${id}`;
+          ? `https://backend-mediconnect.onrender.com/doctor/busy/${id}`
+          : `https://backend-mediconnect.onrender.com/doctor/availability/${id}`;
 
         await axios.delete(endpoint);
         fetchSchedule(); // re-fetch the schedule without reloading the page

@@ -41,7 +41,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
 
                 // Create or join video session
                 const token = localStorage.getItem('token');
-                const response = await fetch(`${apiConfig.apiUrl}/api/video/session/create`, {
+                const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/create`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

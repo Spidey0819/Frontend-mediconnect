@@ -15,7 +15,7 @@ function RequestLink() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post("http://localhost:5000/api/request-reset", { email: formData.email });
+      const res = await axios.post("https://backend-mediconnect.onrender.com/api/request-reset", { email: formData.email });
       setMessage({ text: res.data.message, type: "success" });
     } catch (err) {
       setMessage({

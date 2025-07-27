@@ -7,7 +7,7 @@ const DoctorList = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    axios.get("http://localhost:5000/api/doctors") // adjust the URL if needed
+    axios.get("https://backend-mediconnect.onrender.com/api/doctors") // adjust the URL if needed
       .then(res => {
         setDoctors(res.data);
         setLoading(false);

@@ -95,7 +95,7 @@ const PatientDashboard = () => {
         try {
             const token = localStorage.getItem("token");
             const res = await axios.get(
-                `http://localhost:5000/api/doctors/${doctorUserId}/availability`,
+                `https://backend-mediconnect.onrender.com/api/doctors/${doctorUserId}/availability`,
                 {
                     headers: { Authorization: `Bearer ${token}` },
                 }
@@ -161,7 +161,7 @@ const PatientDashboard = () => {
         try {
             setAppointmentsLoading(true);
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/patient/appointments', {
+            const response = await axios.get('https://backend-mediconnect.onrender.com/api/patient/appointments', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setAppointments(response.data.appointments || []);
@@ -220,7 +220,7 @@ const PatientDashboard = () => {
         try {
             const token = localStorage.getItem("token");
             const response = await axios.get(
-                "http://localhost:5000/api/patient/profile",
+                "https://backend-mediconnect.onrender.com/api/patient/profile",
                 {
                     headers: { Authorization: `Bearer ${token}` },
                 }
@@ -233,7 +233,7 @@ const PatientDashboard = () => {
 
     const fetchAvailableDoctors = () => {
         axios
-            .get("http://localhost:5000/api/doctors", {
+            .get("https://backend-mediconnect.onrender.com/api/doctors", {
                 headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
             })
             .then((res) => setAvailableDoctors(res.data))

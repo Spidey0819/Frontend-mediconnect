@@ -45,7 +45,7 @@ const DoctorDashboard = () => {
         const fetchSettings = async () => {
             try {
                 const res = await axios.get(
-                    `http://localhost:5000/doctor/schedule-settings?doctorId=${localStorage.getItem("doctorId")}`
+                    `https://backend-mediconnect.onrender.com/doctor/schedule-settings?doctorId=${localStorage.getItem("doctorId")}`
                 );
                 if (res.status === 200) setSettings(res.data);
             } catch (err) {
@@ -57,7 +57,7 @@ const DoctorDashboard = () => {
 
     const saveSettings = async () => {
         try {
-            await axios.post("http://localhost:5000/doctor/schedule-settings", {
+            await axios.post("https://backend-mediconnect.onrender.com/doctor/schedule-settings", {
                 doctorId: localStorage.getItem("doctorId"),
                 ...settings,
             });
@@ -83,7 +83,7 @@ const DoctorDashboard = () => {
     const fetchDoctorProfile = async () => {
         try {
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/doctor/profile', {
+            const response = await axios.get('https://backend-mediconnect.onrender.com/api/doctor/profile', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setDoctorProfile(response.data);
@@ -97,7 +97,7 @@ const DoctorDashboard = () => {
         try {
             setAppointmentsLoading(true);
             const token = localStorage.getItem('token');
-            const response = await axios.get('http://localhost:5000/api/doctor/appointments', {
+            const response = await axios.get('https://backend-mediconnect.onrender.com/api/doctor/appointments', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setAppointments(response.data.appointments || []);
@@ -124,7 +124,7 @@ const DoctorDashboard = () => {
     const updateAppointmentStatus = async (appointmentId, status) => {
         try {
             const token = localStorage.getItem('token');
-            await axios.put(`http://localhost:5000/api/appointments/${appointmentId}/status`, {
+            await axios.put(`https://backend-mediconnect.onrender.com/api/appointments/${appointmentId}/status`, {
                 status: status
             }, {
                 headers: { Authorization: `Bearer ${token}` }
