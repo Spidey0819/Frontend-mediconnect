@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Peer from 'peerjs';
-import apiConfig from '../config/api';
+import apiConfig, { getPeerJSConfig } from '../config/api';
 
 const VideoCall = ({ appointmentId, onCallEnd }) => {
     const [peer, setPeer] = useState(null);
@@ -41,7 +41,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
 
                 // Create or join video session
                 const token = localStorage.getItem('token');
-                const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/create`, {
+                const response = await fetch(`${apiConfig.apiUrl}/api/video/session/create`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -59,21 +59,14 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
                 setRoomId(sessionData.room_id);
                 addLog(`Created session: ${sessionData.room_id}`);
 
-                // Initialize PeerJS
+                // Get PeerJS configuration with proper secure settings
+                const peerConfig = getPeerJSConfig();
                 const peerId = `${sessionData.room_id}_${userRole}_${Date.now()}`;
-                const newPeer = new Peer(peerId, {
-                    host: apiConfig.peerjsHost,
-                    port: parseInt(apiConfig.peerjsPort),
-                    path: '/peerjs',
-                    secure: false,
-                    config: {
-                        iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
-                            { urls: 'stun:stun1.l.google.com:19302' }
-                        ]
-                    },
-                    debug: 2
-                });
+
+                addLog(`Connecting to PeerJS server: ${peerConfig.secure ? 'wss' : 'ws'}://${peerConfig.host}:${peerConfig.port}${peerConfig.path}`);
+
+                // Initialize PeerJS with proper configuration
+                const newPeer = new Peer(peerId, peerConfig);
 
                 newPeer.on('open', (id) => {
                     console.log('My peer ID is: ' + id);
@@ -176,7 +169,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const storePeerIdInBackend = async (sessionId, peerId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/peer`, {
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peer`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -206,7 +199,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const joinSession = async (sessionId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/join`, {
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/join`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -227,7 +220,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const discoverPeers = async (sessionId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/peers`, {
+            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peers`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -311,7 +304,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
             // End session on backend
             if (sessionId) {
                 const token = localStorage.getItem('token');
-                await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/end`, {
+                await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/end`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
