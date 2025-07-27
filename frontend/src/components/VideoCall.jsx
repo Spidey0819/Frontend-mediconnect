@@ -176,7 +176,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const storePeerIdInBackend = async (sessionId, peerId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peer`, {
+            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/peer`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -206,7 +206,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const joinSession = async (sessionId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/join`, {
+            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/join`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -227,7 +227,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
     const discoverPeers = async (sessionId) => {
         try {
             const token = localStorage.getItem('token');
-            const response = await fetch(`${apiConfig.apiUrl}/api/video/session/${sessionId}/peers`, {
+            const response = await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/peers`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -311,7 +311,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
             // End session on backend
             if (sessionId) {
                 const token = localStorage.getItem('token');
-                await fetch(`${apiConfig.apiUrl}${apiConfig.apiUrl}/api/video/session/${sessionId}/end`, {
+                await fetch(`https://backend-mediconnect.onrender.com/api/video/session/${sessionId}/end`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
