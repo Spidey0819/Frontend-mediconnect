@@ -345,7 +345,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
 
                     // Add delay for mobile networks
                     setTimeout(() => {
-                        if (userRole === 'patient' && !callInitiated) {
+                        if (!callInitiated) {
                             initiateCall(targetPeer.peer_id, targetPeer.user_name);
                         }
                     }, 2000);
