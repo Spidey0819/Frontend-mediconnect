@@ -247,7 +247,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
 
             incomingCall.on('stream', (remoteStream) => {
                 addLog('✅ Remote video stream connected!');
-                if (remoteVideoRef.current) {
+                if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
                     remoteVideoRef.current.srcObject = remoteStream;
                 }
                 setIsCallActive(true);
@@ -387,7 +387,7 @@ const VideoCall = ({ appointmentId, onCallEnd }) => {
             outgoingCall.on('stream', (remoteStream) => {
                 clearTimeout(callTimeout);
                 addLog('✅ Call connected successfully!');
-                if (remoteVideoRef.current) {
+                if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
                     remoteVideoRef.current.srcObject = remoteStream;
                 }
                 setIsCallActive(true);
