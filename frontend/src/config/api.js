@@ -1,11 +1,11 @@
 const config = {
     development: {
-        apiUrl: 'http://localhost:5000',
+        apiUrl: 'https://backend-mediconnect.onrender.com',
         peerjsHost: 'localhost',
         peerjsPort: 9000
     },
     production: {
-        apiUrl: process.env.REACT_APP_API_URL || 'http://localhost:5000',
+        apiUrl: process.env.REACT_APP_API_URL || 'https://backend-mediconnect.onrender.com',
         peerjsHost: process.env.REACT_APP_PEERJS_HOST || 'localhost',
         peerjsPort: process.env.REACT_APP_PEERJS_PORT || 9000
     }
